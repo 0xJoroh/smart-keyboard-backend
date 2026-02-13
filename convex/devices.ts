@@ -145,6 +145,7 @@ export const getDevice = query({
       deviceId: device.deviceId,
       credits: device.credits,
       isPro: device.isPro,
+      revenueCatId: device.revenueCatId,
       lastCreditClaimDate: device.lastCreditClaimDate,
     };
   },
