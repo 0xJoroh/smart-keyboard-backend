@@ -1,0 +1,20 @@
+{
+  "name": "smart-keyboard-convex-backend",
+  "version": "1.0.0",
+  "description": "Smart Keyboard backend powered by Convex",
+  "scripts": {
+    "dev": "npx convex dev",
+    "deploy": "npx convex deploy",
+    "dev:once": "npx convex dev --once"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^1.41.0",
+    "convex": "^1.31.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
