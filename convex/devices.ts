@@ -99,7 +99,7 @@ export const updateProStatus = internalMutation({
     const device = await ctx.db
       .query("devices")
       .withIndex("by_revenueCatId", (q) =>
-        q.eq("revenueCatId", args.revenueCatId)
+        q.eq("revenueCatId", args.revenueCatId),
       )
       .unique();
 
@@ -111,9 +111,7 @@ export const updateProStatus = internalMutation({
         .unique();
 
       if (!deviceById) {
-        console.warn(
-          `Device not found for revenueCatId: ${args.revenueCatId}`
-        );
+        console.warn(`Device not found for revenueCatId: ${args.revenueCatId}`);
         return;
       }
 

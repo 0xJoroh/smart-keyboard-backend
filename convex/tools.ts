@@ -53,7 +53,10 @@ export const executeTool = action({
     contextBefore: v.optional(v.string()),
     contextAfter: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
     result?: string;
     variants?: string[];
     metadata?: Record<string, string>;
@@ -141,10 +144,7 @@ Return ONLY a JSON object with this structure:
       try {
         finalData = JSON.parse(cleanedJson);
       } catch {
-        console.error(
-          "Failed to parse Gemini output as JSON:",
-          responseText
-        );
+        console.error("Failed to parse Gemini output as JSON:", responseText);
         finalData = {
           result: responseText,
           variants: [responseText],

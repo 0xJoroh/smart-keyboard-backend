@@ -6,10 +6,10 @@ const http = httpRouter();
 
 /**
  * RevenueCat Webhook Handler
- * 
+ *
  * Receives webhook events from RevenueCat and updates device Pro status.
  * Validates the authorization header against the stored secret.
- * 
+ *
  * RevenueCat webhook events reference:
  * https://www.revenuecat.com/docs/integrations/webhooks/event-types-and-fields
  */
@@ -33,7 +33,7 @@ http.route({
     // Parse the webhook body
     let body: RevenueCatWebhookEvent;
     try {
-      body = await request.json() as RevenueCatWebhookEvent;
+      body = (await request.json()) as RevenueCatWebhookEvent;
     } catch {
       return new Response("Invalid JSON body", { status: 400 });
     }
@@ -51,9 +51,7 @@ http.route({
       return new Response("Missing app_user_id", { status: 400 });
     }
 
-    console.log(
-      `RevenueCat webhook: ${eventType} for user ${appUserId}`
-    );
+    console.log(`RevenueCat webhook: ${eventType} for user ${appUserId}`);
 
     // Determine Pro status based on event type
     let isPro: boolean | null = null;
@@ -115,7 +113,10 @@ interface RevenueCatWebhookEvent {
     cancel_reason?: string;
     price_in_purchased_currency?: number;
     currency?: string;
-    subscriber_attributes?: Record<string, { value: string; updated_at_ms: number }>;
+    subscriber_attributes?: Record<
+      string,
+      { value: string; updated_at_ms: number }
+    >;
   };
 }
 
