@@ -1,6 +1,7 @@
 import { action, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
+import OpenAI from "openai";
 
 /**
  * Internal mutation: deduct 1 credit from a device.
@@ -41,8 +42,9 @@ export const logToolUsage = internalMutation({
 });
 
 /**
- * Execute an AI tool using Google Gemini.
- * Validates device, checks credits, calls Gemini, deducts credit if needed.
+ * Execute an AI tool using OpenRouter (non-streaming fallback).
+ * The primary streaming endpoint is in http.ts.
+ * This action is kept for backward compatibility.
  */
 export const executeTool = action({
   args: {
@@ -50,19 +52,23 @@ export const executeTool = action({
     toolId: v.string(),
     systemPrompt: v.optional(v.string()),
     userInput: v.string(),
-    contextBefore: v.optional(v.string()),
-    contextAfter: v.optional(v.string()),
+    previousResults: v.optional(v.array(v.string())),
   },
   handler: async (
     ctx,
     args,
   ): Promise<{
     result?: string;
-    variants?: string[];
     metadata?: Record<string, string>;
     error?: string;
   }> => {
-    // 1. Query device record
+    // 1. Enforce 2-word minimum
+    const wordCount = args.userInput.trim().split(/\s+/).length;
+    if (wordCount < 2) {
+      return { error: "too_short" };
+    }
+
+    // 2. Query device record
     const device = await ctx.runQuery(api.devices.getDevice, {
       deviceId: args.deviceId,
     });
@@ -71,113 +77,109 @@ export const executeTool = action({
       throw new Error("Device not registered. Please register first.");
     }
 
-    // 2. Check if user has credits or is Pro
+    // 3. Check if user has credits or is Pro
     if (!device.isPro && device.credits <= 0) {
       return { error: "no_credits" };
     }
 
-    // 3. Rate limiting — check recent usage (last 60 seconds)
+    // 4. Rate limiting
     const recentUsage = await ctx.runQuery(api.toolUsage.getRecentUsage, {
       deviceId: args.deviceId,
-      since: Date.now() - 60_000, // last 60 seconds
+      since: Date.now() - 60_000,
     });
 
     if (recentUsage.count > 20) {
       return { error: "rate_limited" };
     }
 
-    // 4. Call Google Gemini API
-    const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) {
-      throw new Error("GEMINI_API_KEY not configured");
+    // 5. Call OpenRouter via OpenAI SDK
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY;
+    if (!openRouterApiKey) {
+      throw new Error("OPENROUTER_API_KEY not configured");
     }
 
-    const modelName = "gemini-2.5-flash-lite";
+    const modelName = "arcee-ai/trinity-large-preview:free";
 
-    const fullPrompt = `
+    const openai = new OpenAI({
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: openRouterApiKey,
+      defaultHeaders: {
+        "HTTP-Referer": "https://smartkeyboard.ai",
+        "X-Title": "Smart Keyboard",
+      },
+    });
+
+    let promptContext = `
 SYSTEM INSTRUCTION:
 ${args.systemPrompt || "You are a helpful writing assistant."}
 
-CONTEXT BEFORE CURSOR:
-"${args.contextBefore || ""}"
+${
+  args.toolId === "fix-mistakes"
+    ? `SPECIFIC INSTRUCTION:
+For each mistake, keep the original sentence structure. 
+Mark incorrect words with #wrong# and place the correction in [correct] immediately after.
+Example: I #goed# [went] to school yesterday.
+Only mark actual errors. Do not rewrite the sentence unless absolutely necessary.`
+    : ""
+}
 
-TEXT TO TRANSFORM:
+USER TEXT:
 "${args.userInput}"
 
-CONTEXT AFTER CURSOR:
-"${args.contextAfter || ""}"
-
 TASK:
-Transform the 'TEXT TO TRANSFORM' based on the system instruction. 
-If the instruction asks for rephrasing, please provide 3 distinct versions.
+Improve or transform the 'USER TEXT' strictly following the SYSTEM INSTRUCTION. 
+Provide the complete improved version of the text.
+Return ONLY the improved text directly, without any JSON wrapping, markdown formatting, or extra commentary.
 
-OUTPUT FORMAT:
-Return ONLY a JSON object with this structure:
-{
-  "result": "the primary improved version",
-  "variants": ["version 1", "version 2", "version 3"]
+${
+  args.previousResults && args.previousResults.length > 0
+    ? `
+IMPORTANT: You have already generated the following results for this text. 
+DO NOT repeat or closely rephrase any of them. Generate a meaningfully different version.
+PREVIOUS RESULTS:
+${args.previousResults.map((r, i) => `${i + 1}. "${r}"`).join("\n")}
+`
+    : ""
 }
 `;
 
     try {
-      // Use the Google GenAI SDK
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-
-      const response = await ai.models.generateContent({
+      const completion = await openai.chat.completions.create({
         model: modelName,
-        contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+        messages: [{ role: "user", content: promptContext }],
       });
 
-      const responseText = response.text ?? "";
+      const responseText = completion.choices[0]?.message?.content || "";
 
-      // Clean up JSON if Gemini wraps it in ```json ... ```
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      const cleanedJson = jsonMatch ? jsonMatch[0] : responseText;
-
-      let finalData: {
-        result?: string;
-        text?: string;
-        variants?: string[];
-        metadata?: Record<string, string>;
-      };
-      try {
-        finalData = JSON.parse(cleanedJson);
-      } catch {
-        console.error("Failed to parse Gemini output as JSON:", responseText);
-        finalData = {
-          result: responseText,
-          variants: [responseText],
-          metadata: { error: "Failed to parse structured JSON" },
-        };
-      }
-
-      // 5. If not Pro, deduct 1 credit
+      // 6. If not Pro, deduct 1 credit
       if (!device.isPro) {
         await ctx.runMutation(internal.tools.deductCredit, {
           deviceId: args.deviceId,
         });
       }
 
-      // 6. Log usage
+      // 7. Log usage
       await ctx.runMutation(internal.tools.logToolUsage, {
         deviceId: args.deviceId,
         toolId: args.toolId,
       });
 
       return {
-        result: finalData.result || finalData.text || responseText,
-        variants: finalData.variants || [],
+        result: responseText,
         metadata: {
           model: modelName,
           tool: args.toolId,
         },
       };
     } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      console.error("Gemini API error:", errorMessage);
-      throw new Error(`Failed to process AI request: ${errorMessage}`);
+      const errorString = String(error);
+      console.error("OpenRouter API error:", errorString);
+
+      if (errorString.includes("429")) {
+        return { error: "ai_quota_exceeded" };
+      }
+
+      return { error: "ai_failed" };
     }
   },
 });

@@ -1,4 +1,9 @@
-import { mutation, query, internalMutation } from "./_generated/server";
+import {
+  mutation,
+  query,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import { v } from "convex/values";
 
 /**
@@ -128,6 +133,33 @@ export const updateProStatus = internalMutation({
  * Used by the iOS app to display credit count and Pro status.
  */
 export const getDevice = query({
+  args: {
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+
+    if (!device) {
+      return null;
+    }
+
+    return {
+      deviceId: device.deviceId,
+      credits: device.credits,
+      isPro: device.isPro,
+      revenueCatId: device.revenueCatId,
+      lastCreditClaimDate: device.lastCreditClaimDate,
+    };
+  },
+});
+
+/**
+ * Internal variant of getDevice for use by HTTP actions.
+ */
+export const getDeviceInternal = internalQuery({
   args: {
     deviceId: v.string(),
   },
