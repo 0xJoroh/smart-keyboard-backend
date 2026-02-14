@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import OpenAI from "openai";
+import { buildFullPrompt } from "./prompts";
 
 const http = httpRouter();
 
@@ -116,9 +117,9 @@ http.route({
     let body: {
       deviceId: string;
       toolId: string;
-      systemPrompt?: string;
       userInput: string;
       previousResults?: string[];
+      metadata?: Record<string, string>;
     };
 
     try {
@@ -130,7 +131,7 @@ http.route({
       });
     }
 
-    const { deviceId, toolId, systemPrompt, userInput, previousResults } = body;
+    const { deviceId, toolId, userInput, previousResults, metadata } = body;
 
     if (!deviceId || !toolId || !userInput) {
       return new Response(JSON.stringify({ error: "missing_fields" }), {
@@ -195,11 +196,11 @@ http.route({
 
     const modelName = "arcee-ai/trinity-large-preview:free";
 
-    const promptContent = buildPrompt({
-      systemPrompt: systemPrompt || "You are a helpful writing assistant.",
+    const promptContent = buildFullPrompt({
       toolId,
       userInput,
       previousResults,
+      metadata,
     });
 
     // Create OpenAI client pointed at OpenRouter
@@ -311,48 +312,6 @@ http.route({
     });
   }),
 });
-
-// Helper: build the prompt context
-function buildPrompt(opts: {
-  systemPrompt: string;
-  toolId: string;
-  userInput: string;
-  previousResults?: string[];
-}): string {
-  return `
-SYSTEM INSTRUCTION:
-${opts.systemPrompt}
-
-${
-  opts.toolId === "fix-mistakes"
-    ? `SPECIFIC INSTRUCTION:
-For each mistake, keep the original sentence structure. 
-Mark incorrect words with #wrong# and place the correction in [correct] immediately after.
-Example: I #goed# [went] to school yesterday.
-Only mark actual errors. Do not rewrite the sentence unless absolutely necessary.`
-    : ""
-}
-
-USER TEXT:
-"${opts.userInput}"
-
-TASK:
-Improve or transform the 'USER TEXT' strictly following the SYSTEM INSTRUCTION. 
-Provide the complete improved version of the text.
-Return ONLY the improved text directly, without any JSON wrapping, markdown formatting, or extra commentary.
-
-${
-  opts.previousResults && opts.previousResults.length > 0
-    ? `
-IMPORTANT: You have already generated the following results for this text. 
-DO NOT repeat or closely rephrase any of them. Generate a meaningfully different version.
-PREVIOUS RESULTS:
-${opts.previousResults.map((r, i) => `${i + 1}. "${r}"`).join("\n")}
-`
-    : ""
-}
-`;
-}
 
 // Type definitions for RevenueCat webhook events
 interface RevenueCatWebhookEvent {

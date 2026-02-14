@@ -10,6 +10,7 @@
 
 import type * as devices from "../devices.js";
 import type * as http from "../http.js";
+import type * as prompts from "../prompts.js";
 import type * as toolUsage from "../toolUsage.js";
 import type * as tools from "../tools.js";
 
@@ -22,6 +23,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   devices: typeof devices;
   http: typeof http;
+  prompts: typeof prompts;
   toolUsage: typeof toolUsage;
   tools: typeof tools;
 }>;

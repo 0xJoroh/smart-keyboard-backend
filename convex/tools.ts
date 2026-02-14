@@ -2,7 +2,7 @@ import { action, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import OpenAI from "openai";
-
+import { buildFullPrompt } from "./prompts";
 /**
  * Internal mutation: deduct 1 credit from a device.
  */
@@ -50,9 +50,9 @@ export const executeTool = action({
   args: {
     deviceId: v.string(),
     toolId: v.string(),
-    systemPrompt: v.optional(v.string()),
     userInput: v.string(),
     previousResults: v.optional(v.array(v.string())),
+    metadata: v.optional(v.any()), // v.record(v.string(), v.string()) or v.any() since specific type might be strict
   },
   handler: async (
     ctx,
@@ -109,41 +109,15 @@ export const executeTool = action({
       },
     });
 
-    let promptContext = `
-SYSTEM INSTRUCTION:
-${args.systemPrompt || "You are a helpful writing assistant."}
-
-${
-  args.toolId === "fix-mistakes"
-    ? `SPECIFIC INSTRUCTION:
-For each mistake, keep the original sentence structure. 
-Mark incorrect words with #wrong# and place the correction in [correct] immediately after.
-Example: I #goed# [went] to school yesterday.
-Only mark actual errors. Do not rewrite the sentence unless absolutely necessary.`
-    : ""
-}
-
-USER TEXT:
-"${args.userInput}"
-
-TASK:
-Improve or transform the 'USER TEXT' strictly following the SYSTEM INSTRUCTION. 
-Provide the complete improved version of the text.
-Return ONLY the improved text directly, without any JSON wrapping, markdown formatting, or extra commentary.
-
-${
-  args.previousResults && args.previousResults.length > 0
-    ? `
-IMPORTANT: You have already generated the following results for this text. 
-DO NOT repeat or closely rephrase any of them. Generate a meaningfully different version.
-PREVIOUS RESULTS:
-${args.previousResults.map((r, i) => `${i + 1}. "${r}"`).join("\n")}
-`
-    : ""
-}
-`;
+    const promptContext = buildFullPrompt({
+      toolId: args.toolId,
+      userInput: args.userInput,
+      previousResults: args.previousResults,
+      metadata: args.metadata,
+    });
 
     try {
+      console.log("Prompt Context:", promptContext);
       const completion = await openai.chat.completions.create({
         model: modelName,
         messages: [{ role: "user", content: promptContext }],
