@@ -144,7 +144,7 @@ http.route({
     const wordCount = userInput.trim().split(/\s+/).length;
     if (wordCount < 2) {
       return new Response(JSON.stringify({ error: "too_short" }), {
-        status: 200,
+        status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -156,7 +156,7 @@ http.route({
 
     if (!device) {
       return new Response(JSON.stringify({ error: "device_not_found" }), {
-        status: 200,
+        status: 401,
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -164,7 +164,7 @@ http.route({
     // 3. Check if user has credits or is Pro
     if (!device.isPro && device.credits <= 0) {
       return new Response(JSON.stringify({ error: "no_credits" }), {
-        status: 200,
+        status: 402,
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -180,7 +180,7 @@ http.route({
 
     if (recentUsage.count > 20) {
       return new Response(JSON.stringify({ error: "rate_limited" }), {
-        status: 200,
+        status: 429,
         headers: { "Content-Type": "application/json" },
       });
     }
