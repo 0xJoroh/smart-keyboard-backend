@@ -194,7 +194,7 @@ http.route({
       });
     }
 
-    const modelName = "arcee-ai/trinity-large-preview:free";
+    const modelName = "google/gemma-3-27b-it:free";
 
     const promptContent = buildFullPrompt({
       toolId,
@@ -208,8 +208,7 @@ http.route({
       baseURL: "https://openrouter.ai/api/v1",
       apiKey: openRouterApiKey,
       defaultHeaders: {
-        "HTTP-Referer": "https://smartkeyboard.ai",
-        "X-Title": "Smart Keyboard",
+        "X-Title": "Smart Keyboard App",
       },
     });
 
@@ -300,6 +299,75 @@ http.route({
 // CORS preflight for the streaming endpoint
 http.route({
   path: "/api/executeTool",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+/**
+ * Check Credits Endpoint
+ *
+ * Lightweight endpoint to verify if a user has remaining credits or is Pro.
+ * Called by the keyboard extension before starting text extraction.
+ */
+http.route({
+  path: "/api/checkCredits",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let body: { deviceId: string };
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "invalid_json" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const { deviceId } = body;
+    if (!deviceId) {
+      return new Response(JSON.stringify({ error: "missing_deviceId" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const device = await ctx.runQuery(internal.devices.getDeviceInternal, {
+      deviceId,
+    });
+
+    if (!device) {
+      return new Response(JSON.stringify({ error: "device_not_found" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!device.isPro && device.credits <= 0) {
+      return new Response(JSON.stringify({ error: "no_credits" }), {
+        status: 402,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// CORS preflight for the checkCredits endpoint
+http.route({
+  path: "/api/checkCredits",
   method: "OPTIONS",
   handler: httpAction(async () => {
     return new Response(null, {

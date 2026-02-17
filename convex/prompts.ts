@@ -36,11 +36,12 @@ export const TOOL_INSTRUCTIONS: Record<string, string> = {
   "fix-mistakes": `
 ${LANGUAGE_INSTRUCTION}
 You are a strict spelling and grammar checker.
-For each mistake, keep the original sentence structure. 
-Mark incorrect words with #wrong# and place the correction in [correct] immediately after.
-Example: I #goed# [went] to school yesterday.
-Only mark actual errors. Do not rewrite the sentence unless absolutely necessary. and do not add any additional text or formatting.
-we always return the original text with the corrections.
+Transform the user's text to correct all spelling, grammar, and punctuation mistakes.
+IMPORTANT: 
+- DO NOT rewrite the sentence or change its tone. 
+- DO NOT be creative. Keep the original wording as much as possible.
+- Output ONLY the corrected text directly.
+- Ensure the output is a normal readable sentence without any special markup (#wrong#, [correct], etc.).
 `,
 
   improve: `${LANGUAGE_INSTRUCTION}. Improve the user's text based on this style: {{option}}. Make it effective and professional.`,
