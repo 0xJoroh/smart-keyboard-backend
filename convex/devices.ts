@@ -40,6 +40,7 @@ export const registerDevice = mutation({
       credits: 0,
       isPro: false,
       lastCreditClaimDate: undefined,
+      lastCreditClaimTimestamp: undefined,
       createdAt: Date.now(),
     });
 
@@ -67,26 +68,38 @@ export const claimDailyCredits = mutation({
       throw new Error("Device not found. Please register first.");
     }
 
-    // Check if credits were already claimed today
-    if (device.lastCreditClaimDate === args.todayDate) {
+    // Check if 24 hours (86400000 ms) have passed since the last claim
+    const now = Date.now();
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+    if (
+      device.lastCreditClaimTimestamp &&
+      now - device.lastCreditClaimTimestamp < TWENTY_FOUR_HOURS
+    ) {
       return {
         credits: device.credits,
         claimed: false,
-        message: "Credits already claimed today",
+        message: "You must wait 24 hours between claims",
+        lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
       };
     }
 
     // Grant 5 credits (no accumulation — reset to 5)
+    // You can decide if you want to simply add 5: const newCredits = device.credits + 5;
+    // or reset to 5. The previous code says "add 5: newCredits = device.credits + 5"
     const newCredits = device.credits + 5;
+
     await ctx.db.patch(device._id, {
       credits: newCredits,
       lastCreditClaimDate: args.todayDate,
+      lastCreditClaimTimestamp: now,
     });
 
     return {
       credits: newCredits,
       claimed: true,
       message: "5 credits claimed!",
+      lastCreditClaimTimestamp: now,
     };
   },
 });
@@ -152,6 +165,7 @@ export const getDevice = query({
       isPro: device.isPro,
       revenueCatId: device.revenueCatId,
       lastCreditClaimDate: device.lastCreditClaimDate,
+      lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
     };
   },
 });
@@ -179,6 +193,7 @@ export const getDeviceInternal = internalQuery({
       isPro: device.isPro,
       revenueCatId: device.revenueCatId,
       lastCreditClaimDate: device.lastCreditClaimDate,
+      lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
     };
   },
 });
