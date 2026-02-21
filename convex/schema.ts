@@ -18,7 +18,9 @@ export default defineSchema({
     deviceId: v.string(),
     toolId: v.string(),
     createdAt: v.number(),
-  }).index("by_deviceId", ["deviceId"]),
+  })
+    .index("by_deviceId", ["deviceId"])
+    .index("by_deviceId_and_time", ["deviceId", "createdAt"]),
 
   feedback: defineTable({
     deviceId: v.string(),

@@ -140,6 +140,47 @@ http.route({
       });
     }
 
+    // 0. Emergency Kill Switch
+    if (process.env.KILL_SWITCH === "true") {
+      return new Response(JSON.stringify({ error: "service_unavailable" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // 0.5 Maximum Input / Context Length Safeguards
+    const MAX_INPUT_LENGTH = 3000; // About ~750 tokens
+    if (userInput.length > MAX_INPUT_LENGTH) {
+      return new Response(JSON.stringify({ error: "input_too_long" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Limit previousResults to prevent huge arrays or massive text
+    if (previousResults) {
+      if (previousResults.length > 5) {
+        return new Response(
+          JSON.stringify({ error: "too_many_previous_results" }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+      for (const res of previousResults) {
+        if (typeof res !== "string" || res.length > 2000) {
+          return new Response(
+            JSON.stringify({ error: "previous_result_too_long" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+      }
+    }
+
     // 1. Enforce 2-word minimum (except for find-synonyms which requires exactly 1 word)
     const wordCount = userInput.trim().split(/\s+/).length;
     if (toolId === "find-synonyms") {
@@ -187,11 +228,34 @@ http.route({
       },
     );
 
-    if (recentUsage.count > 20) {
+    if (recentUsage.count > 15) {
+      // Adjusted from 20 for stricter control
       return new Response(JSON.stringify({ error: "rate_limited" }), {
         status: 429,
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    // 4.5. Daily Usage Limit for Paid Users
+    if (device.isPro) {
+      const dailyUsage = await ctx.runQuery(
+        internal.toolUsage.getRecentUsageInternal,
+        {
+          deviceId,
+          since: Date.now() - 24 * 60 * 60 * 1000,
+        },
+      );
+
+      const PRO_DAILY_LIMIT = 500; // Generous but bounded daily usage
+      if (dailyUsage.count > PRO_DAILY_LIMIT) {
+        console.warn(
+          `[Abuse Prevented] Pro user ${deviceId} hit daily limit (${dailyUsage.count} requests).`,
+        );
+        return new Response(JSON.stringify({ error: "daily_limit_exceeded" }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
     }
 
     // 5. Prepare OpenRouter streaming call
@@ -212,7 +276,9 @@ http.route({
       metadata,
     });
 
-    console.log("Prompt content:", promptContent);
+    console.log(
+      `[Usage] Device: ${deviceId}, IsPro: ${device.isPro}, Tool: ${toolId}, Input Length: ${userInput.length}`,
+    );
 
     // Create OpenAI client pointed at OpenRouter
     const openai = new OpenAI({
@@ -234,6 +300,8 @@ http.route({
             model: modelName,
             messages: [{ role: "user", content: promptContent }],
             stream: true,
+            max_tokens: 600, // Limit AI response length to prevent huge token costs
+            stream_options: { include_usage: true },
           });
 
           for await (const chunk of completion) {
@@ -258,6 +326,14 @@ http.route({
             }
           } catch {
             // If JSON parsing fails, use the raw text
+          }
+
+          // Truncate response if it's too long
+          if (finalResult.length > 5000) {
+            console.warn(
+              `[Cost Control] Response from ${toolId} exceeded length expectation. Truncating.`,
+            );
+            finalResult = finalResult.substring(0, 5000) + "...";
           }
 
           // Send completion event
@@ -339,6 +415,14 @@ http.route({
     } catch {
       return new Response(JSON.stringify({ error: "invalid_json" }), {
         status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Emergency Kill Switch
+    if (process.env.KILL_SWITCH === "true") {
+      return new Response(JSON.stringify({ error: "service_unavailable" }), {
+        status: 503,
         headers: { "Content-Type": "application/json" },
       });
     }

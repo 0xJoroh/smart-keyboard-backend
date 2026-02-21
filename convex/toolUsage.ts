@@ -12,8 +12,9 @@ export const getRecentUsage = query({
   handler: async (ctx, args) => {
     const usages = await ctx.db
       .query("toolUsage")
-      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
-      .filter((q) => q.gte(q.field("createdAt"), args.since))
+      .withIndex("by_deviceId_and_time", (q) =>
+        q.eq("deviceId", args.deviceId).gte("createdAt", args.since),
+      )
       .collect();
 
     return { count: usages.length };
@@ -31,8 +32,9 @@ export const getRecentUsageInternal = internalQuery({
   handler: async (ctx, args) => {
     const usages = await ctx.db
       .query("toolUsage")
-      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
-      .filter((q) => q.gte(q.field("createdAt"), args.since))
+      .withIndex("by_deviceId_and_time", (q) =>
+        q.eq("deviceId", args.deviceId).gte("createdAt", args.since),
+      )
       .collect();
 
     return { count: usages.length };

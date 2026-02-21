@@ -16,6 +16,12 @@ export const registerDevice = mutation({
     revenueCatId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    if (
+      args.deviceId.length > 255 ||
+      (args.revenueCatId && args.revenueCatId.length > 255)
+    ) {
+      throw new Error("Invalid id length");
+    }
     // Check if device already exists
     const existing = await ctx.db
       .query("devices")
