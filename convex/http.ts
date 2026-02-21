@@ -140,13 +140,22 @@ http.route({
       });
     }
 
-    // 1. Enforce 2-word minimum
+    // 1. Enforce 2-word minimum (except for find-synonyms which requires exactly 1 word)
     const wordCount = userInput.trim().split(/\s+/).length;
-    if (wordCount < 2) {
-      return new Response(JSON.stringify({ error: "too_short" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+    if (toolId === "find-synonyms") {
+      if (wordCount !== 1) {
+        return new Response(JSON.stringify({ error: "too_short" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    } else {
+      if (wordCount < 2) {
+        return new Response(JSON.stringify({ error: "too_short" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
     }
 
     // 2. Query device record
@@ -202,6 +211,8 @@ http.route({
       previousResults,
       metadata,
     });
+
+    console.log("Prompt content:", promptContent);
 
     // Create OpenAI client pointed at OpenRouter
     const openai = new OpenAI({

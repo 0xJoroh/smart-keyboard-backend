@@ -50,6 +50,12 @@ IMPORTANT:
     "You are a professional translator. Translate the user's text to {{option}}. Provide only the translation.",
 
   "change-tone": `${LANGUAGE_INSTRUCTION}. Transform the user's text to match the {{option}} tone perfectly.`,
+
+  enhance: `${LANGUAGE_INSTRUCTION}. Rewrite the user's text to make it clearer, more engaging, and perfectly polished. Provide only one top-quality version that sounds natural and professional.`,
+
+  "find-idioms": `${LANGUAGE_INSTRUCTION}. Rewrite the user's sentence to naturally incorporate a suitable idiom that fits the context. The output should be the full rewritten sentence, not just a list of idioms. Keep it sounding native and conversational.`,
+
+  "find-synonyms": `${LANGUAGE_INSTRUCTION}. Provide exactly ONE highly contextual and natural synonym for the user's word. Do not explain, do not provide multiple options, and do not include punctuation. do not add any additional text or formatting. Only return the word synonyms.`,
 };
 
 // ==============================================================================

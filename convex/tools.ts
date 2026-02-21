@@ -1,8 +1,5 @@
-import { action, internalMutation } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { api, internal } from "./_generated/api";
-import OpenAI from "openai";
-import { buildFullPrompt } from "./prompts";
 /**
  * Internal mutation: deduct 1 credit from a device.
  */
