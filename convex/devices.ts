@@ -34,24 +34,60 @@ export const registerDevice = mutation({
         await ctx.db.patch(existing._id, {
           revenueCatId: args.revenueCatId,
         });
-        return { ...existing, revenueCatId: args.revenueCatId };
       }
-      return existing;
+      // Return normalized record with defaults for optional fields
+      return {
+        deviceId: existing.deviceId,
+        credits: existing.credits,
+        isPro: existing.isPro,
+        revenueCatId: args.revenueCatId ?? existing.revenueCatId,
+        lastCreditClaimDate: existing.lastCreditClaimDate,
+        lastCreditClaimTimestamp: existing.lastCreditClaimTimestamp,
+        hasClaimedKeyboardSetupReward:
+          existing.hasClaimedKeyboardSetupReward ?? false,
+        adWatchSessionsToday: existing.adWatchSessionsToday ?? 0,
+        lastAdWatchResetTimestamp: existing.lastAdWatchResetTimestamp,
+        bonusAdClaimsToday: existing.bonusAdClaimsToday ?? 0,
+        lastBonusAdResetTimestamp: existing.lastBonusAdResetTimestamp,
+        createdAt: existing.createdAt,
+      };
     }
 
     // Create new device record
-    const deviceId = await ctx.db.insert("devices", {
+    const newId = await ctx.db.insert("devices", {
       deviceId: args.deviceId,
       revenueCatId: args.revenueCatId,
       credits: 0,
       isPro: false,
       lastCreditClaimDate: undefined,
       lastCreditClaimTimestamp: undefined,
+      hasClaimedKeyboardSetupReward: false,
+      adWatchSessionsToday: 0,
+      lastAdWatchResetTimestamp: undefined,
+      bonusAdClaimsToday: 0,
+      lastBonusAdResetTimestamp: undefined,
       createdAt: Date.now(),
     });
 
-    const device = await ctx.db.get(deviceId);
-    return device;
+    const device = await ctx.db.get(newId);
+    if (!device) {
+      throw new Error("Failed to create device record");
+    }
+    return {
+      deviceId: device.deviceId,
+      credits: device.credits,
+      isPro: device.isPro,
+      revenueCatId: device.revenueCatId,
+      lastCreditClaimDate: device.lastCreditClaimDate,
+      lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
+      hasClaimedKeyboardSetupReward:
+        device.hasClaimedKeyboardSetupReward ?? false,
+      adWatchSessionsToday: device.adWatchSessionsToday ?? 0,
+      lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
+      bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
+      lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
+      createdAt: device.createdAt,
+    };
   },
 });
 
@@ -106,6 +142,162 @@ export const claimDailyCredits = mutation({
       claimed: true,
       message: "5 credits claimed!",
       lastCreditClaimTimestamp: now,
+    };
+  },
+});
+
+/**
+ * Claim keyboard setup reward (one-time only, 20 credits).
+ * Even if the keyboard is disabled and re-enabled, this only rewards once.
+ */
+export const claimKeyboardSetupReward = mutation({
+  args: {
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+
+    if (!device) {
+      throw new Error("Device not found. Please register first.");
+    }
+
+    // Strict one-time enforcement
+    if (device.hasClaimedKeyboardSetupReward) {
+      return {
+        credits: device.credits,
+        claimed: false,
+        message: "Keyboard setup reward already claimed",
+      };
+    }
+
+    const newCredits = device.credits + 20;
+    await ctx.db.patch(device._id, {
+      credits: newCredits,
+      hasClaimedKeyboardSetupReward: true,
+    });
+
+    return {
+      credits: newCredits,
+      claimed: true,
+      message: "20 credits claimed for keyboard setup!",
+    };
+  },
+});
+
+/**
+ * Claim ad watch reward (5 credits per session, up to 5 sessions per 24h).
+ * Uses 24-hour timestamp-based reset like daily credits.
+ */
+export const claimAdWatchReward = mutation({
+  args: {
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+
+    if (!device) {
+      throw new Error("Device not found. Please register first.");
+    }
+
+    const now = Date.now();
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+    let sessionsToday = device.adWatchSessionsToday ?? 0;
+    const lastResetTimestamp = device.lastAdWatchResetTimestamp;
+
+    // Reset counter if 24 hours have passed
+    if (!lastResetTimestamp || now - lastResetTimestamp >= TWENTY_FOUR_HOURS) {
+      sessionsToday = 0;
+    }
+
+    if (sessionsToday >= 5) {
+      return {
+        credits: device.credits,
+        claimed: false,
+        sessionsCompleted: sessionsToday,
+        message: "Daily ad watch limit reached (5/5)",
+      };
+    }
+
+    const newSessions = sessionsToday + 1;
+    const newCredits = device.credits + 5;
+    const resetTimestamp =
+      sessionsToday === 0 ? now : (lastResetTimestamp ?? now);
+
+    await ctx.db.patch(device._id, {
+      credits: newCredits,
+      adWatchSessionsToday: newSessions,
+      lastAdWatchResetTimestamp: resetTimestamp,
+    });
+
+    return {
+      credits: newCredits,
+      claimed: true,
+      sessionsCompleted: newSessions,
+      message: `5 credits claimed! (${newSessions}/5 sessions)`,
+    };
+  },
+});
+
+/**
+ * Claim bonus ad reward (10 credits, up to 3 times per 24h).
+ * Triggered after completing any task, as an optional extra.
+ */
+export const claimBonusAdReward = mutation({
+  args: {
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+
+    if (!device) {
+      throw new Error("Device not found. Please register first.");
+    }
+
+    const now = Date.now();
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+    let bonusToday = device.bonusAdClaimsToday ?? 0;
+    const lastResetTimestamp = device.lastBonusAdResetTimestamp;
+
+    // Reset counter if 24 hours have passed
+    if (!lastResetTimestamp || now - lastResetTimestamp >= TWENTY_FOUR_HOURS) {
+      bonusToday = 0;
+    }
+
+    if (bonusToday >= 3) {
+      return {
+        credits: device.credits,
+        claimed: false,
+        bonusClaimsToday: bonusToday,
+        message: "Daily bonus ad limit reached (3/3)",
+      };
+    }
+
+    const newBonus = bonusToday + 1;
+    const newCredits = device.credits + 10;
+    const resetTimestamp = bonusToday === 0 ? now : (lastResetTimestamp ?? now);
+
+    await ctx.db.patch(device._id, {
+      credits: newCredits,
+      bonusAdClaimsToday: newBonus,
+      lastBonusAdResetTimestamp: resetTimestamp,
+    });
+
+    return {
+      credits: newCredits,
+      claimed: true,
+      bonusClaimsToday: newBonus,
+      message: `10 bonus credits claimed! (${newBonus}/3 today)`,
     };
   },
 });
@@ -172,6 +364,12 @@ export const getDevice = query({
       revenueCatId: device.revenueCatId,
       lastCreditClaimDate: device.lastCreditClaimDate,
       lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
+      hasClaimedKeyboardSetupReward:
+        device.hasClaimedKeyboardSetupReward ?? false,
+      adWatchSessionsToday: device.adWatchSessionsToday ?? 0,
+      lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
+      bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
+      lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
     };
   },
 });
@@ -200,6 +398,12 @@ export const getDeviceInternal = internalQuery({
       revenueCatId: device.revenueCatId,
       lastCreditClaimDate: device.lastCreditClaimDate,
       lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
+      hasClaimedKeyboardSetupReward:
+        device.hasClaimedKeyboardSetupReward ?? false,
+      adWatchSessionsToday: device.adWatchSessionsToday ?? 0,
+      lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
+      bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
+      lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
     };
   },
 });

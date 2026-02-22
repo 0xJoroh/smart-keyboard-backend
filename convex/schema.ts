@@ -9,6 +9,14 @@ export default defineSchema({
     isPro: v.boolean(),
     lastCreditClaimDate: v.optional(v.string()), // ISO date string e.g. "2026-02-13"
     lastCreditClaimTimestamp: v.optional(v.number()), // Unix timestamp in ms
+    // Keyboard setup reward (one-time)
+    hasClaimedKeyboardSetupReward: v.optional(v.boolean()),
+    // Ad watch sessions (daily, up to 5)
+    adWatchSessionsToday: v.optional(v.number()),
+    lastAdWatchResetTimestamp: v.optional(v.number()),
+    // Bonus ad claims (daily, up to 3)
+    bonusAdClaimsToday: v.optional(v.number()),
+    lastBonusAdResetTimestamp: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_deviceId", ["deviceId"])
