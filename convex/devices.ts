@@ -49,6 +49,7 @@ export const registerDevice = mutation({
         lastAdWatchResetTimestamp: existing.lastAdWatchResetTimestamp,
         bonusAdClaimsToday: existing.bonusAdClaimsToday ?? 0,
         lastBonusAdResetTimestamp: existing.lastBonusAdResetTimestamp,
+        hasClaimedReviewReward: existing.hasClaimedReviewReward ?? false,
         createdAt: existing.createdAt,
       };
     }
@@ -66,6 +67,7 @@ export const registerDevice = mutation({
       lastAdWatchResetTimestamp: undefined,
       bonusAdClaimsToday: 0,
       lastBonusAdResetTimestamp: undefined,
+      hasClaimedReviewReward: false,
       createdAt: Date.now(),
     });
 
@@ -86,6 +88,7 @@ export const registerDevice = mutation({
       lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
       bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
       lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
+      hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
       createdAt: device.createdAt,
     };
   },
@@ -303,6 +306,47 @@ export const claimBonusAdReward = mutation({
 });
 
 /**
+ * Claim app review reward (one-time only, 20 credits).
+ * Granted after the user taps the review button.
+ */
+export const claimReviewReward = mutation({
+  args: {
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+
+    if (!device) {
+      throw new Error("Device not found. Please register first.");
+    }
+
+    // Strict one-time enforcement
+    if (device.hasClaimedReviewReward) {
+      return {
+        credits: device.credits,
+        claimed: false,
+        message: "Review reward already claimed",
+      };
+    }
+
+    const newCredits = device.credits + 20;
+    await ctx.db.patch(device._id, {
+      credits: newCredits,
+      hasClaimedReviewReward: true,
+    });
+
+    return {
+      credits: newCredits,
+      claimed: true,
+      message: "20 credits claimed for app review!",
+    };
+  },
+});
+
+/**
  * Internal mutation to update Pro status from RevenueCat webhook.
  * Not exposed to clients — only callable from other Convex functions.
  */
@@ -370,6 +414,7 @@ export const getDevice = query({
       lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
       bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
       lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
+      hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
     };
   },
 });
@@ -404,6 +449,7 @@ export const getDeviceInternal = internalQuery({
       lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
       bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
       lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
+      hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
     };
   },
 });

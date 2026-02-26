@@ -17,6 +17,8 @@ export default defineSchema({
     // Bonus ad claims (daily, up to 3)
     bonusAdClaimsToday: v.optional(v.number()),
     lastBonusAdResetTimestamp: v.optional(v.number()),
+    // App review reward (one-time)
+    hasClaimedReviewReward: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_deviceId", ["deviceId"])
