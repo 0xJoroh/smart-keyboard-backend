@@ -427,6 +427,34 @@ export const updateProStatus = internalMutation({
 });
 
 /**
+ * Synchronize Pro status from the client app.
+ * Called when the client's RevenueCat SDK detects a change in Pro entitlements to ensure
+ * instantaneous access without waiting for webhooks.
+ */
+export const syncProState = mutation({
+  args: {
+    deviceId: v.string(),
+    isPro: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+
+    if (!device) {
+      throw new Error("Device not found. Please register first.");
+    }
+
+    if (device.isPro !== args.isPro) {
+      await ctx.db.patch(device._id, { isPro: args.isPro });
+    }
+
+    return { success: true, isPro: args.isPro };
+  },
+});
+
+/**
  * Get device record by deviceId.
  * Used by the iOS app to display credit count and Pro status.
  */
