@@ -50,6 +50,7 @@ export const registerDevice = mutation({
         bonusAdClaimsToday: existing.bonusAdClaimsToday ?? 0,
         lastBonusAdResetTimestamp: existing.lastBonusAdResetTimestamp,
         hasClaimedReviewReward: existing.hasClaimedReviewReward ?? false,
+        hasClaimedQuickActionGift: existing.hasClaimedQuickActionGift ?? false,
         createdAt: existing.createdAt,
       };
     }
@@ -68,6 +69,7 @@ export const registerDevice = mutation({
       bonusAdClaimsToday: 0,
       lastBonusAdResetTimestamp: undefined,
       hasClaimedReviewReward: false,
+      hasClaimedQuickActionGift: false,
       createdAt: Date.now(),
     });
 
@@ -89,6 +91,7 @@ export const registerDevice = mutation({
       bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
       lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
       hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
+      hasClaimedQuickActionGift: device.hasClaimedQuickActionGift ?? false,
       createdAt: device.createdAt,
     };
   },
@@ -347,6 +350,46 @@ export const claimReviewReward = mutation({
 });
 
 /**
+ * Claim quick action gift (one-time only, 10 credits).
+ */
+export const claimQuickActionGift = mutation({
+  args: {
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+
+    if (!device) {
+      throw new Error("Device not found. Please register first.");
+    }
+
+    // Strict one-time enforcement
+    if (device.hasClaimedQuickActionGift) {
+      return {
+        credits: device.credits,
+        claimed: false,
+        message: "Quick action gift already claimed",
+      };
+    }
+
+    const newCredits = device.credits + 10;
+    await ctx.db.patch(device._id, {
+      credits: newCredits,
+      hasClaimedQuickActionGift: true,
+    });
+
+    return {
+      credits: newCredits,
+      claimed: true,
+      message: "10 credits claimed! Enjoy your gift! 🎁",
+    };
+  },
+});
+
+/**
  * Internal mutation to update Pro status from RevenueCat webhook.
  * Not exposed to clients — only callable from other Convex functions.
  */
@@ -415,6 +458,7 @@ export const getDevice = query({
       bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
       lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
       hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
+      hasClaimedQuickActionGift: device.hasClaimedQuickActionGift ?? false,
     };
   },
 });
@@ -450,6 +494,7 @@ export const getDeviceInternal = internalQuery({
       bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
       lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
       hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
+      hasClaimedQuickActionGift: device.hasClaimedQuickActionGift ?? false,
     };
   },
 });

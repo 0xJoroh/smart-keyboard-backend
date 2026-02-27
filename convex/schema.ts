@@ -19,6 +19,8 @@ export default defineSchema({
     lastBonusAdResetTimestamp: v.optional(v.number()),
     // App review reward (one-time)
     hasClaimedReviewReward: v.optional(v.boolean()),
+    // Quick action gift (one-time)
+    hasClaimedQuickActionGift: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_deviceId", ["deviceId"])

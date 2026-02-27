@@ -66,10 +66,18 @@ http.route({
         isPro = true;
         break;
 
-      case "CANCELLATION":
-      case "EXPIRATION":
-      case "BILLING_ISSUE":
+      case "EXPIRATION": // User loses access only at expiration
         isPro = false;
+        break;
+
+      case "CANCELLATION":
+      case "BILLING_ISSUE":
+        // DO NOT change `isPro` status here!
+        // CANCELLATION means they disabled auto-renew but still have access until EXPIRATION.
+        // BILLING_ISSUE usually means they are in a grace period where access is maintained.
+        console.log(
+          `User ${appUserId} had ${eventType}. We wait for EXPIRATION to strip Pro status.`,
+        );
         break;
 
       case "TRANSFER":
