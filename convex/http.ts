@@ -308,7 +308,7 @@ http.route({
             model: modelName,
             messages: [{ role: "user", content: promptContent }],
             stream: true,
-            max_tokens: 600, // Limit AI response length to prevent huge token costs
+            max_tokens: 50000,
             stream_options: { include_usage: true },
           });
 
@@ -334,14 +334,6 @@ http.route({
             }
           } catch {
             // If JSON parsing fails, use the raw text
-          }
-
-          // Truncate response if it's too long
-          if (finalResult.length > 5000) {
-            console.warn(
-              `[Cost Control] Response from ${toolId} exceeded length expectation. Truncating.`,
-            );
-            finalResult = finalResult.substring(0, 5000) + "...";
           }
 
           // Send completion event
