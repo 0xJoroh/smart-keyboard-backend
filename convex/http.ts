@@ -157,7 +157,7 @@ http.route({
     }
 
     // 0.5 Maximum Input / Context Length Safeguards
-    const MAX_INPUT_LENGTH = 3000; // About ~750 tokens
+    const MAX_INPUT_LENGTH = 6000; // About ~1500 tokens
     if (userInput.length > MAX_INPUT_LENGTH) {
       return new Response(JSON.stringify({ error: "input_too_long" }), {
         status: 400,
