@@ -12,6 +12,13 @@ const corsAllowOrigin =
 const revenueCatApiKey =
   process.env.REVENUECAT_API_KEY || process.env.REVENUECAT_SECRET_API_KEY || "";
 const revenueCatEntitlementId = process.env.REVENUECAT_ENTITLEMENT_ID || "";
+const openRouterModel = process.env.OPENROUTER_MODEL || "openrouter/auto";
+const openRouterFallbackModels = (
+  process.env.OPENROUTER_FALLBACK_MODELS || "qwen/qwen-2.5-7b-instruct"
+)
+  .split(",")
+  .map((model) => model.trim())
+  .filter((model) => model.length > 0);
 
 function getCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin");
@@ -372,7 +379,7 @@ http.route({
       });
     }
 
-    const modelName = "google/gemma-3-27b-it:free";
+    const modelName = openRouterModel;
 
     const promptContent = buildFullPrompt({
       toolId,
@@ -383,6 +390,9 @@ http.route({
 
     console.log(
       `[Usage] Device: ${deviceId}, IsPro: ${effectiveIsPro}, Tool: ${toolId}, Input Length: ${userInput.length}`,
+    );
+    console.log(
+      `[AI] Model: ${modelName}, Fallbacks: ${openRouterFallbackModels.join(",") || "none"}`,
     );
 
     // Create OpenAI client pointed at OpenRouter
@@ -407,6 +417,9 @@ http.route({
             stream: true,
             max_tokens: 1200,
             stream_options: { include_usage: true },
+            ...(openRouterFallbackModels.length > 0
+              ? { models: openRouterFallbackModels }
+              : {}),
           });
 
           for await (const chunk of completion) {
