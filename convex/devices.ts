@@ -6,6 +6,10 @@ import {
 } from "./_generated/server";
 import { v } from "convex/values";
 
+function generateApiToken(): string {
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
 /**
  * Register a device. If the device already exists, return it.
  * Otherwise, create a new device record with 0 credits and isPro = false.
@@ -29,15 +33,22 @@ export const registerDevice = mutation({
       .unique();
 
     if (existing) {
+      const apiToken = existing.apiToken || generateApiToken();
+
       // If revenueCatId is provided and different, update it
-      if (args.revenueCatId && existing.revenueCatId !== args.revenueCatId) {
+      if (
+        (args.revenueCatId && existing.revenueCatId !== args.revenueCatId) ||
+        !existing.apiToken
+      ) {
         await ctx.db.patch(existing._id, {
           revenueCatId: args.revenueCatId,
+          apiToken,
         });
       }
       // Return normalized record with defaults for optional fields
       return {
         deviceId: existing.deviceId,
+        apiToken,
         credits: existing.credits,
         isPro: existing.isPro,
         revenueCatId: args.revenueCatId ?? existing.revenueCatId,
@@ -56,8 +67,10 @@ export const registerDevice = mutation({
     }
 
     // Create new device record
+    const apiToken = generateApiToken();
     const newId = await ctx.db.insert("devices", {
       deviceId: args.deviceId,
+      apiToken,
       revenueCatId: args.revenueCatId,
       credits: 0,
       isPro: false,
@@ -79,6 +92,7 @@ export const registerDevice = mutation({
     }
     return {
       deviceId: device.deviceId,
+      apiToken: device.apiToken,
       credits: device.credits,
       isPro: device.isPro,
       revenueCatId: device.revenueCatId,
@@ -431,7 +445,7 @@ export const updateProStatus = internalMutation({
  * Called when the client's RevenueCat SDK detects a change in Pro entitlements to ensure
  * instantaneous access without waiting for webhooks.
  */
-export const syncProState = mutation({
+export const syncProState = internalMutation({
   args: {
     deviceId: v.string(),
     isPro: v.boolean(),
@@ -474,6 +488,7 @@ export const getDevice = query({
 
     return {
       deviceId: device.deviceId,
+      apiToken: device.apiToken,
       credits: device.credits,
       isPro: device.isPro,
       revenueCatId: device.revenueCatId,
@@ -510,6 +525,7 @@ export const getDeviceInternal = internalQuery({
 
     return {
       deviceId: device.deviceId,
+      apiToken: device.apiToken,
       credits: device.credits,
       isPro: device.isPro,
       revenueCatId: device.revenueCatId,

@@ -6,6 +6,83 @@ import { buildFullPrompt } from "./prompts";
 
 const http = httpRouter();
 
+const corsAllowOrigin =
+  process.env.CORS_ALLOW_ORIGIN || process.env.CONVEX_SITE_URL || "";
+
+const revenueCatApiKey =
+  process.env.REVENUECAT_API_KEY || process.env.REVENUECAT_SECRET_API_KEY || "";
+const revenueCatEntitlementId = process.env.REVENUECAT_ENTITLEMENT_ID || "";
+
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin");
+  if (!corsAllowOrigin || !origin || origin !== corsAllowOrigin) {
+    return {};
+  }
+  return {
+    "Access-Control-Allow-Origin": corsAllowOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+}
+
+function isRevenueCatEntitlementActive(entitlement: {
+  expires_date?: string | null;
+}): boolean {
+  if (!entitlement) return false;
+  if (!entitlement.expires_date) return true;
+  const expiresAt = Date.parse(entitlement.expires_date);
+  if (Number.isNaN(expiresAt)) return false;
+  return expiresAt > Date.now();
+}
+
+async function fetchRevenueCatIsPro(
+  appUserId: string,
+): Promise<boolean | null> {
+  if (!revenueCatApiKey) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(appUserId)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${revenueCatApiKey}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    if (!response.ok) {
+      console.warn(
+        `RevenueCat status check failed for ${appUserId}: ${response.status}`,
+      );
+      return null;
+    }
+
+    const payload = (await response.json()) as {
+      subscriber?: {
+        entitlements?: Record<string, { expires_date?: string | null }>;
+      };
+    };
+
+    const entitlements = payload.subscriber?.entitlements ?? {};
+
+    if (revenueCatEntitlementId) {
+      const entitlement = entitlements[revenueCatEntitlementId];
+      return isRevenueCatEntitlementActive(entitlement ?? {});
+    }
+
+    return Object.values(entitlements).some((entitlement) =>
+      isRevenueCatEntitlementActive(entitlement),
+    );
+  } catch (error) {
+    console.warn(`RevenueCat status check error for ${appUserId}:`, error);
+    return null;
+  }
+}
+
 /**
  * RevenueCat Webhook Handler
  *
@@ -27,7 +104,9 @@ http.route({
     }
 
     const authHeader = request.headers.get("Authorization");
-    if (!authHeader || authHeader !== `Bearer ${webhookSecret}`) {
+    const isAuthorized =
+      authHeader === webhookSecret || authHeader === `Bearer ${webhookSecret}`;
+    if (!isAuthorized) {
       console.warn("Invalid webhook authorization header");
       return new Response("Unauthorized", { status: 401 });
     }
@@ -124,6 +203,7 @@ http.route({
     // Parse request body
     let body: {
       deviceId: string;
+      authToken?: string;
       toolId: string;
       userInput: string;
       previousResults?: string[];
@@ -139,7 +219,14 @@ http.route({
       });
     }
 
-    const { deviceId, toolId, userInput, previousResults, metadata } = body;
+    const {
+      deviceId,
+      authToken,
+      toolId,
+      userInput,
+      previousResults,
+      metadata,
+    } = body;
 
     if (!deviceId || !toolId || !userInput) {
       return new Response(JSON.stringify({ error: "missing_fields" }), {
@@ -219,8 +306,18 @@ http.route({
       });
     }
 
-    // 3. Check if user has credits or is Pro
-    if (!device.isPro && device.credits <= 0) {
+    if (!authToken || authToken !== device.apiToken) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // 3. Check if user has credits or is Pro.
+    // Server-side source of truth is Convex state (`device.isPro`), which is updated
+    // via webhooks and explicit verifyPurchase calls only.
+    const effectiveIsPro = device.isPro;
+    if (!effectiveIsPro && device.credits <= 0) {
       return new Response(JSON.stringify({ error: "no_credits" }), {
         status: 402,
         headers: { "Content-Type": "application/json" },
@@ -245,7 +342,7 @@ http.route({
     }
 
     // 4.5. Daily Usage Limit for Paid Users
-    if (device.isPro) {
+    if (effectiveIsPro) {
       const dailyUsage = await ctx.runQuery(
         internal.toolUsage.getRecentUsageInternal,
         {
@@ -285,7 +382,7 @@ http.route({
     });
 
     console.log(
-      `[Usage] Device: ${deviceId}, IsPro: ${device.isPro}, Tool: ${toolId}, Input Length: ${userInput.length}`,
+      `[Usage] Device: ${deviceId}, IsPro: ${effectiveIsPro}, Tool: ${toolId}, Input Length: ${userInput.length}`,
     );
 
     // Create OpenAI client pointed at OpenRouter
@@ -293,7 +390,7 @@ http.route({
       baseURL: "https://openrouter.ai/api/v1",
       apiKey: openRouterApiKey,
       defaultHeaders: {
-        "X-Title": "Smart Keyboard App",
+        "X-Title": "Keyboard Copilot App",
       },
     });
 
@@ -308,7 +405,7 @@ http.route({
             model: modelName,
             messages: [{ role: "user", content: promptContent }],
             stream: true,
-            max_tokens: 50000,
+            max_tokens: 1200,
             stream_options: { include_usage: true },
           });
 
@@ -344,7 +441,7 @@ http.route({
           );
 
           // 7. Deduct credits + log usage (after successful stream)
-          if (!device.isPro) {
+          if (!effectiveIsPro) {
             await ctx.runMutation(internal.tools.deductCredit, {
               deviceId,
             });
@@ -377,7 +474,7 @@ http.route({
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*",
+        ...getCorsHeaders(request),
       },
     });
   }),
@@ -387,14 +484,10 @@ http.route({
 http.route({
   path: "/api/executeTool",
   method: "OPTIONS",
-  handler: httpAction(async () => {
+  handler: httpAction(async (_ctx, request) => {
     return new Response(null, {
       status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-      },
+      headers: getCorsHeaders(request),
     });
   }),
 });
@@ -409,7 +502,7 @@ http.route({
   path: "/api/checkCredits",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    let body: { deviceId: string };
+    let body: { deviceId: string; authToken?: string };
     try {
       body = await request.json();
     } catch {
@@ -427,7 +520,7 @@ http.route({
       });
     }
 
-    const { deviceId } = body;
+    const { deviceId, authToken } = body;
     if (!deviceId) {
       return new Response(JSON.stringify({ error: "missing_deviceId" }), {
         status: 400,
@@ -446,7 +539,16 @@ http.route({
       });
     }
 
-    if (!device.isPro && device.credits <= 0) {
+    if (!authToken || authToken !== device.apiToken) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const effectiveIsPro = device.isPro;
+
+    if (!effectiveIsPro && device.credits <= 0) {
       return new Response(JSON.stringify({ error: "no_credits" }), {
         status: 402,
         headers: { "Content-Type": "application/json" },
@@ -460,18 +562,113 @@ http.route({
   }),
 });
 
+/**
+ * Verify Purchase Endpoint
+ *
+ * Called by the iOS app right after a successful purchase or restore.
+ * This endpoint validates entitlement status from RevenueCat and only then
+ * promotes the device to Pro in Convex.
+ */
+http.route({
+  path: "/api/verifyPurchase",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let body: { deviceId: string; authToken?: string };
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "invalid_json" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!revenueCatApiKey) {
+      return new Response(
+        JSON.stringify({ error: "verification_unavailable" }),
+        {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    const { deviceId, authToken } = body;
+    if (!deviceId) {
+      return new Response(JSON.stringify({ error: "missing_deviceId" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const device = await ctx.runQuery(internal.devices.getDeviceInternal, {
+      deviceId,
+    });
+
+    if (!device) {
+      return new Response(JSON.stringify({ error: "device_not_found" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!authToken || authToken !== device.apiToken) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const appUserId = device.revenueCatId || device.deviceId;
+    const revenueCatIsPro = await fetchRevenueCatIsPro(appUserId);
+
+    if (revenueCatIsPro === null) {
+      return new Response(JSON.stringify({ error: "verification_failed" }), {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!revenueCatIsPro) {
+      return new Response(JSON.stringify({ error: "entitlement_inactive" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!device.isPro) {
+      await ctx.runMutation(internal.devices.syncProState, {
+        deviceId: device.deviceId,
+        isPro: true,
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true, isPro: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+http.route({
+  path: "/api/verifyPurchase",
+  method: "OPTIONS",
+  handler: httpAction(async (_ctx, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: getCorsHeaders(request),
+    });
+  }),
+});
+
 // CORS preflight for the checkCredits endpoint
 http.route({
   path: "/api/checkCredits",
   method: "OPTIONS",
-  handler: httpAction(async () => {
+  handler: httpAction(async (_ctx, request) => {
     return new Response(null, {
       status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-      },
+      headers: getCorsHeaders(request),
     });
   }),
 });

@@ -4,6 +4,7 @@ import { v } from "convex/values";
 export default defineSchema({
   devices: defineTable({
     deviceId: v.string(),
+    apiToken: v.optional(v.string()),
     revenueCatId: v.optional(v.string()),
     credits: v.number(),
     isPro: v.boolean(),
