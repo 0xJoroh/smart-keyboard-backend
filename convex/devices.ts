@@ -3,11 +3,110 @@ import {
   query,
   internalMutation,
   internalQuery,
+  internalAction,
 } from "./_generated/server";
+import { internal } from "./_generated/api";
+import type { FunctionReference } from "convex/server";
 import { v } from "convex/values";
 
 function generateApiToken(): string {
   return crypto.randomUUID().replace(/-/g, "");
+}
+
+function isPushoverEnabled(): boolean {
+  return process.env.PUSHOVER_ENABLED === "true";
+}
+
+function normalizeCountry(country?: string): string | undefined {
+  const trimmed = country?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length > 100) {
+    throw new Error("Invalid country length");
+  }
+  return trimmed;
+}
+
+function buildDeviceResponse(
+  device: {
+    deviceId: string;
+    apiToken?: string;
+    credits: number;
+    isPro: boolean;
+    revenueCatId?: string;
+    country?: string;
+    lastCreditClaimDate?: string;
+    lastCreditClaimTimestamp?: number;
+    hasClaimedKeyboardSetupReward?: boolean;
+    adWatchSessionsToday?: number;
+    lastAdWatchResetTimestamp?: number;
+    bonusAdClaimsToday?: number;
+    lastBonusAdResetTimestamp?: number;
+    hasClaimedReviewReward?: boolean;
+    hasClaimedQuickActionGift?: boolean;
+    createdAt?: number;
+  },
+  overrides?: {
+    revenueCatId?: string;
+  },
+) {
+  return {
+    deviceId: device.deviceId,
+    apiToken: device.apiToken,
+    credits: device.credits,
+    isPro: device.isPro,
+    revenueCatId: overrides?.revenueCatId ?? device.revenueCatId,
+    country: device.country,
+    lastCreditClaimDate: device.lastCreditClaimDate,
+    lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
+    hasClaimedKeyboardSetupReward:
+      device.hasClaimedKeyboardSetupReward ?? false,
+    adWatchSessionsToday: device.adWatchSessionsToday ?? 0,
+    lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
+    bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
+    lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
+    hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
+    hasClaimedQuickActionGift: device.hasClaimedQuickActionGift ?? false,
+    createdAt: device.createdAt,
+  };
+}
+
+const MAX_NOTIFICATION_ATTEMPTS = 4;
+const NOTIFICATION_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000];
+
+type PushoverSendResult = {
+  sent: boolean;
+  reason?:
+    | "disabled"
+    | "missing_credentials"
+    | "api_error"
+    | "timeout"
+    | "network_error";
+};
+
+type NotificationProcessResult = {
+  processed: boolean;
+  sent?: boolean;
+  reason?: string;
+  retrying?: boolean;
+  attempt?: number;
+};
+
+function isRetryableNotificationFailure(reason: string | undefined): boolean {
+  return (
+    reason === "api_error" ||
+    reason === "network_error" ||
+    reason === "timeout"
+  );
+}
+
+function notificationRetryDelayMs(attempt: number): number {
+  const index = Math.min(
+    Math.max(0, attempt - 1),
+    NOTIFICATION_RETRY_DELAYS_MS.length - 1,
+  );
+  return NOTIFICATION_RETRY_DELAYS_MS[index];
 }
 
 /**
@@ -18,8 +117,12 @@ export const registerDevice = mutation({
   args: {
     deviceId: v.string(),
     revenueCatId: v.optional(v.string()),
+    country: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normalizedCountry = normalizeCountry(args.country);
+    const now = Date.now();
+
     if (
       args.deviceId.length > 255 ||
       (args.revenueCatId && args.revenueCatId.length > 255)
@@ -38,32 +141,26 @@ export const registerDevice = mutation({
       // If revenueCatId is provided and different, update it
       if (
         (args.revenueCatId && existing.revenueCatId !== args.revenueCatId) ||
-        !existing.apiToken
+        !existing.apiToken ||
+        (normalizedCountry && existing.country !== normalizedCountry)
       ) {
         await ctx.db.patch(existing._id, {
           revenueCatId: args.revenueCatId,
           apiToken,
+          country: normalizedCountry ?? existing.country,
         });
       }
       // Return normalized record with defaults for optional fields
-      return {
-        deviceId: existing.deviceId,
-        apiToken,
-        credits: existing.credits,
-        isPro: existing.isPro,
-        revenueCatId: args.revenueCatId ?? existing.revenueCatId,
-        lastCreditClaimDate: existing.lastCreditClaimDate,
-        lastCreditClaimTimestamp: existing.lastCreditClaimTimestamp,
-        hasClaimedKeyboardSetupReward:
-          existing.hasClaimedKeyboardSetupReward ?? false,
-        adWatchSessionsToday: existing.adWatchSessionsToday ?? 0,
-        lastAdWatchResetTimestamp: existing.lastAdWatchResetTimestamp,
-        bonusAdClaimsToday: existing.bonusAdClaimsToday ?? 0,
-        lastBonusAdResetTimestamp: existing.lastBonusAdResetTimestamp,
-        hasClaimedReviewReward: existing.hasClaimedReviewReward ?? false,
-        hasClaimedQuickActionGift: existing.hasClaimedQuickActionGift ?? false,
-        createdAt: existing.createdAt,
-      };
+      return buildDeviceResponse(
+        {
+          ...existing,
+          apiToken,
+          country: normalizedCountry ?? existing.country,
+        },
+        {
+          revenueCatId: args.revenueCatId ?? existing.revenueCatId,
+        },
+      );
     }
 
     // Create new device record
@@ -72,6 +169,7 @@ export const registerDevice = mutation({
       deviceId: args.deviceId,
       apiToken,
       revenueCatId: args.revenueCatId,
+      country: normalizedCountry,
       credits: 0,
       isPro: false,
       lastCreditClaimDate: undefined,
@@ -83,31 +181,33 @@ export const registerDevice = mutation({
       lastBonusAdResetTimestamp: undefined,
       hasClaimedReviewReward: false,
       hasClaimedQuickActionGift: false,
-      createdAt: Date.now(),
+      createdAt: now,
     });
 
     const device = await ctx.db.get(newId);
     if (!device) {
       throw new Error("Failed to create device record");
     }
-    return {
-      deviceId: device.deviceId,
-      apiToken: device.apiToken,
-      credits: device.credits,
-      isPro: device.isPro,
-      revenueCatId: device.revenueCatId,
-      lastCreditClaimDate: device.lastCreditClaimDate,
-      lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
-      hasClaimedKeyboardSetupReward:
-        device.hasClaimedKeyboardSetupReward ?? false,
-      adWatchSessionsToday: device.adWatchSessionsToday ?? 0,
-      lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
-      bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
-      lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
-      hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
-      hasClaimedQuickActionGift: device.hasClaimedQuickActionGift ?? false,
-      createdAt: device.createdAt,
-    };
+
+    if (isPushoverEnabled()) {
+      try {
+        await ctx.scheduler.runAfter(
+          30_000,
+          (internal.devices as any).processNewUserNotification,
+          {
+            deviceId: device.deviceId,
+            attempt: 0,
+          },
+        );
+      } catch (error) {
+        console.warn("Failed to schedule new-user notification fallback", {
+          deviceId: device.deviceId,
+          error,
+        });
+      }
+    }
+
+    return buildDeviceResponse(device);
   },
 });
 
@@ -468,6 +568,107 @@ export const syncProState = internalMutation({
   },
 });
 
+export const setCountry = internalMutation({
+  args: {
+    deviceId: v.string(),
+    country: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+
+    if (!device) {
+      return { updated: false };
+    }
+
+    if (device.country === args.country) {
+      return { updated: false };
+    }
+
+    await ctx.db.patch(device._id, {
+      country: args.country,
+    });
+
+    return { updated: true };
+  },
+});
+
+export const processNewUserNotification = internalAction({
+  args: {
+    deviceId: v.string(),
+    attempt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<NotificationProcessResult> => {
+    if (!isPushoverEnabled()) {
+      return { processed: false, reason: "disabled" as const };
+    }
+
+    const device = await ctx.runQuery(
+      internal.devices.getDeviceInternal as any,
+      {
+        deviceId: args.deviceId,
+      },
+    );
+
+    if (!device) {
+      return { processed: false, reason: "device_not_found" as const };
+    }
+
+    const notificationResult: PushoverSendResult = await ctx.runAction(
+      internal.pushover.sendUserActionNotification,
+      {
+        action: "New User",
+        deviceId: args.deviceId,
+        country: device.country ?? "Unknown",
+      },
+    );
+
+    if (notificationResult.sent) {
+      return { processed: true, sent: true };
+    }
+
+    const attempt = args.attempt ?? 0;
+    const shouldRetry =
+      isRetryableNotificationFailure(notificationResult.reason) &&
+      attempt + 1 < MAX_NOTIFICATION_ATTEMPTS;
+
+    if (shouldRetry) {
+      const nextAttempt = attempt + 1;
+      try {
+        await ctx.scheduler.runAfter(
+          notificationRetryDelayMs(nextAttempt),
+          (internal.devices as any).processNewUserNotification,
+          {
+            deviceId: args.deviceId,
+            attempt: nextAttempt,
+          },
+        );
+      } catch (error) {
+        console.warn("Failed to schedule notification retry", {
+          deviceId: args.deviceId,
+          error,
+        });
+      }
+    }
+
+    return {
+      processed: true,
+      sent: false,
+      reason: notificationResult.reason,
+      retrying: shouldRetry,
+      attempt,
+    };
+  },
+}) as unknown as FunctionReference<
+  "action",
+  "internal",
+  { deviceId: string; attempt?: number },
+  NotificationProcessResult,
+  string | undefined
+>;
+
 /**
  * Get device record by deviceId.
  * Used by the iOS app to display credit count and Pro status.
@@ -486,23 +687,7 @@ export const getDevice = query({
       return null;
     }
 
-    return {
-      deviceId: device.deviceId,
-      apiToken: device.apiToken,
-      credits: device.credits,
-      isPro: device.isPro,
-      revenueCatId: device.revenueCatId,
-      lastCreditClaimDate: device.lastCreditClaimDate,
-      lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
-      hasClaimedKeyboardSetupReward:
-        device.hasClaimedKeyboardSetupReward ?? false,
-      adWatchSessionsToday: device.adWatchSessionsToday ?? 0,
-      lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
-      bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
-      lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
-      hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
-      hasClaimedQuickActionGift: device.hasClaimedQuickActionGift ?? false,
-    };
+    return buildDeviceResponse(device);
   },
 });
 
@@ -523,22 +708,6 @@ export const getDeviceInternal = internalQuery({
       return null;
     }
 
-    return {
-      deviceId: device.deviceId,
-      apiToken: device.apiToken,
-      credits: device.credits,
-      isPro: device.isPro,
-      revenueCatId: device.revenueCatId,
-      lastCreditClaimDate: device.lastCreditClaimDate,
-      lastCreditClaimTimestamp: device.lastCreditClaimTimestamp,
-      hasClaimedKeyboardSetupReward:
-        device.hasClaimedKeyboardSetupReward ?? false,
-      adWatchSessionsToday: device.adWatchSessionsToday ?? 0,
-      lastAdWatchResetTimestamp: device.lastAdWatchResetTimestamp,
-      bonusAdClaimsToday: device.bonusAdClaimsToday ?? 0,
-      lastBonusAdResetTimestamp: device.lastBonusAdResetTimestamp,
-      hasClaimedReviewReward: device.hasClaimedReviewReward ?? false,
-      hasClaimedQuickActionGift: device.hasClaimedQuickActionGift ?? false,
-    };
+    return buildDeviceResponse(device);
   },
 });

@@ -6,6 +6,7 @@ export default defineSchema({
     deviceId: v.string(),
     apiToken: v.optional(v.string()),
     revenueCatId: v.optional(v.string()),
+    country: v.optional(v.string()),
     credits: v.number(),
     isPro: v.boolean(),
     lastCreditClaimDate: v.optional(v.string()), // ISO date string e.g. "2026-02-13"

@@ -19,6 +19,13 @@ const openRouterFallbackModels = (
   .split(",")
   .map((model) => model.trim())
   .filter((model) => model.length > 0);
+const trustedCountryHeaders = [
+  "cf-ipcountry",
+  "x-vercel-ip-country",
+  "cloudfront-viewer-country",
+  "fly-country",
+  "x-country-code",
+];
 
 function getCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin");
@@ -30,6 +37,52 @@ function getCorsHeaders(request: Request): Record<string, string> {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   };
+}
+
+function extractCountryHeader(request: Request): string | undefined {
+  for (const headerName of trustedCountryHeaders) {
+    const value = request.headers.get(headerName)?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function extractClientIp(request: Request): string | undefined {
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    const firstHop = forwardedFor.split(",")[0]?.trim();
+    if (firstHop) {
+      return firstHop;
+    }
+  }
+
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) {
+    return realIp;
+  }
+
+  return undefined;
+}
+
+async function scheduleCountryEnrichment(
+  ctx: any,
+  request: Request,
+  deviceId: string,
+): Promise<void> {
+  try {
+    await ctx.scheduler.runAfter(0, internal.country.enrichDeviceCountry, {
+      deviceId,
+      countryHeader: extractCountryHeader(request),
+      ip: extractClientIp(request),
+    });
+  } catch (error) {
+    console.warn("Failed to schedule country enrichment", {
+      deviceId,
+      error,
+    });
+  }
 }
 
 function isRevenueCatEntitlementActive(entitlement: {
@@ -320,6 +373,8 @@ http.route({
       });
     }
 
+    await scheduleCountryEnrichment(ctx, request, deviceId);
+
     // 3. Check if user has credits or is Pro.
     // Server-side source of truth is Convex state (`device.isPro`), which is updated
     // via webhooks and explicit verifyPurchase calls only.
@@ -559,6 +614,8 @@ http.route({
       });
     }
 
+    await scheduleCountryEnrichment(ctx, request, deviceId);
+
     const effectiveIsPro = device.isPro;
 
     if (!effectiveIsPro && device.credits <= 0) {
@@ -631,6 +688,8 @@ http.route({
         headers: { "Content-Type": "application/json" },
       });
     }
+
+    await scheduleCountryEnrichment(ctx, request, deviceId);
 
     const appUserId = device.revenueCatId || device.deviceId;
     const revenueCatIsPro = await fetchRevenueCatIsPro(appUserId);

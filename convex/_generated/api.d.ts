@@ -8,10 +8,12 @@
  * @module
  */
 
+import type * as country from "../country.js";
 import type * as devices from "../devices.js";
 import type * as feedback from "../feedback.js";
 import type * as http from "../http.js";
 import type * as prompts from "../prompts.js";
+import type * as pushover from "../pushover.js";
 import type * as toolUsage from "../toolUsage.js";
 import type * as tools from "../tools.js";
 
@@ -22,10 +24,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  country: typeof country;
   devices: typeof devices;
   feedback: typeof feedback;
   http: typeof http;
   prompts: typeof prompts;
+  pushover: typeof pushover;
   toolUsage: typeof toolUsage;
   tools: typeof tools;
 }>;
