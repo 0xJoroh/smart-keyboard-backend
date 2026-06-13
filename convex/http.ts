@@ -26,6 +26,86 @@ const trustedCountryHeaders = [
   "fly-country",
   "x-country-code",
 ];
+const toolLabels: Record<string, string> = {
+  rephrase: "Rephrase",
+  "fix-mistakes": "Fix Mistakes",
+  improve: "Improve",
+  translate: "Translate",
+  "change-tone": "Change Tone",
+  enhance: "Enhance",
+  "find-idioms": "Find Idioms",
+  "find-synonyms": "Find Synonyms",
+};
+const metadataOptionKeys = ["option", "tone", "language", "style"];
+
+type MetadataValidationResult =
+  | { ok: true; metadata?: Record<string, string> }
+  | { ok: false };
+
+function validateMetadata(metadata: unknown): MetadataValidationResult {
+  if (metadata === undefined) {
+    return { ok: true };
+  }
+
+  if (
+    typeof metadata !== "object" ||
+    metadata === null ||
+    Array.isArray(metadata)
+  ) {
+    return { ok: false };
+  }
+
+  const validated: Record<string, string> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (typeof value !== "string") {
+      return { ok: false };
+    }
+    validated[key] = value;
+  }
+
+  return { ok: true, metadata: validated };
+}
+
+function getReadableToolLabel(toolId: string): string {
+  const knownLabel = toolLabels[toolId];
+  if (knownLabel) {
+    return knownLabel;
+  }
+
+  const fallbackLabel = toolId
+    .split("-")
+    .filter((part) => part.length > 0)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+  return fallbackLabel || toolId;
+}
+
+function getMetadataOption(
+  metadata: Record<string, string> | undefined,
+): string | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  for (const key of metadataOptionKeys) {
+    const value = metadata[key]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function buildToolName(
+  toolId: string,
+  metadata: Record<string, string> | undefined,
+): string {
+  const label = getReadableToolLabel(toolId);
+  const option = getMetadataOption(metadata);
+  return option ? `${label}: ${option}` : label;
+}
 
 function getCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin");
@@ -267,7 +347,7 @@ http.route({
       toolId: string;
       userInput: string;
       previousResults?: string[];
-      metadata?: Record<string, string>;
+      metadata?: unknown;
     };
 
     try {
@@ -285,7 +365,7 @@ http.route({
       toolId,
       userInput,
       previousResults,
-      metadata,
+      metadata: rawMetadata,
     } = body;
 
     if (!deviceId || !toolId || !userInput) {
@@ -294,6 +374,17 @@ http.route({
         headers: { "Content-Type": "application/json" },
       });
     }
+
+    const metadataValidation = validateMetadata(rawMetadata);
+    if (!metadataValidation.ok) {
+      return new Response(JSON.stringify({ error: "invalid_metadata" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const metadata = metadataValidation.metadata;
+    const toolName = buildToolName(toolId, metadata);
 
     // 0. Emergency Kill Switch
     if (process.env.KILL_SWITCH === "true") {
@@ -517,6 +608,8 @@ http.route({
           await ctx.runMutation(internal.tools.logToolUsage, {
             deviceId,
             toolId,
+            inputContent: userInput,
+            toolName,
           });
 
           controller.close();

@@ -31,6 +31,8 @@ export default defineSchema({
   toolUsage: defineTable({
     deviceId: v.string(),
     toolId: v.string(),
+    inputContent: v.optional(v.string()),
+    toolName: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_deviceId", ["deviceId"])

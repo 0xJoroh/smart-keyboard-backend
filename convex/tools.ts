@@ -28,11 +28,15 @@ export const logToolUsage = internalMutation({
   args: {
     deviceId: v.string(),
     toolId: v.string(),
+    inputContent: v.string(),
+    toolName: v.string(),
   },
   handler: async (ctx, args) => {
     await ctx.db.insert("toolUsage", {
       deviceId: args.deviceId,
       toolId: args.toolId,
+      inputContent: args.inputContent,
+      toolName: args.toolName,
       createdAt: Date.now(),
     });
   },
